@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Bid Track Local",
-  "version": "2.5.1",
-  "description": "Track job applications with full-page screenshots. Saves to Downloads and uploads PNGs to Backblaze B2.",
+  "name": "Bid Track",
+  "version": "3.0.0",
+  "description": "Track job applications with full-page screenshots. Saves to Downloads and uploads PNGs to your Bid Track account.",
   "permissions": [
     "storage",
     "activeTab",
@@ -26,7 +26,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Bid Track Local"
+    "default_title": "Bid Track"
   },
   "side_panel": {
     "default_path": "sidepanel/sidepanel.html"

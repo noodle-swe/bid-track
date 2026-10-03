@@ -659,10 +659,14 @@
       lastCaptureKey = captureKey;
       lastCaptureAt = Date.now();
       const pageType = result.fullPage ? "Full page" : "Viewport";
+      if (result.b2Upload?.error === "not logged in") {
+        showToast("Saved locally — log in to Bid Track so this bid counts.");
+        return;
+      }
       const uploadNote = result.b2Upload?.ok
-        ? "uploaded to Backblaze"
+        ? "uploaded"
         : result.b2Upload?.error
-          ? `Backblaze: ${result.b2Upload.error}`
+          ? `upload failed: ${result.b2Upload.error}`
           : "PNG downloaded";
       showToast(`Step ${result.capture?.step || activeRecord.stepCount} saved · ${pageType} · ${uploadNote}`);
       return;

@@ -1,23 +1,19 @@
-# Bid Track Local
+# Bid Track
 
-Full-page screenshots and JSON metadata saved to **Chrome Downloads**, with each PNG also uploaded to **Backblaze B2**.
-
-Backblaze does not create date folders. The extension writes the local date into the object key and the file name:
-
-`puma/2026-10-03/upwork/job-name/step1_step_2026-10-03_093015.png` (member / date / profile / job)
+Full-page screenshots and JSON metadata saved to **Chrome Downloads**. When you are logged in, each PNG is also uploaded to your Bid Track folder through a short-lived signed link from the Engineers backend. The extension holds no storage keys.
 
 ## Install
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
-3. **Load unpacked** → select this folder: `Bid Track Local`
-4. You can keep **Bid Track** (cloud) loaded at the same time — they are separate extensions with separate storage.
+3. **Load unpacked** and select this folder
+4. Click the extension icon and register with the invite code your manager sent you (choose a username and a password of at least 8 characters). If you are not logged in, screenshots are still saved locally, but they do not count as bids.
 
 ## Settings
 
-- **Downloads root folder** — default `BidTrackScreenshots`
+- **Downloads root folder**, default `BidTrackScreenshots`
 - Auto-download PNG / JSON toggles
-- **Backblaze** — bucket `bid-screenshots`, bucket ID `0f6e97821fb60a18ab150c15`, prefix `puma/`, upload on by default (native B2 API; S3 endpoint `s3.us-east-005.backblazeb2.com` is not used by this extension)
+- **Advanced → Server URL**, default `https://engineersbackend-production.up.railway.app`. Change it only for a test server; blank restores the default.
 
 Files appear under:
 

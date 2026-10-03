@@ -30,18 +30,28 @@ import {
   setActiveRecordId
 } from "./lib/storage.js";
 import { getArtifactBackend } from "./lib/artifact-storage.js";
-import {
-  buildScreenshotObjectKey,
-  clearB2UploadCaches,
-  testBackblazeConnection,
-  uploadPngToB2
-} from "./lib/b2-upload.js";
+import { getAuth, getUploadUrl, localIsoWithOffset } from "./lib/api.js";
 
 const captureQueue = new Map();
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("Bid Track Local installed");
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log("Bid Track installed");
+  if (details.reason === "update") await removeLegacyBackblazeSettings();
 });
+
+// Versions before 3.0 stored Backblaze keys locally; uploads now go through signed links.
+async function removeLegacyBackblazeSettings() {
+  try {
+    const { settings } = await chrome.storage.local.get("settings");
+    if (settings && typeof settings === "object") {
+      const cleaned = Object.fromEntries(Object.entries(settings).filter(([key]) => !key.startsWith("b2")));
+      await chrome.storage.local.set({ settings: cleaned });
+    }
+    await chrome.storage.local.remove("b2ApplicationKeySecret");
+  } catch (err) {
+    console.warn("[Bid Track] Could not remove legacy Backblaze settings:", err.message);
+  }
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender).then(sendResponse).catch((err) => {
@@ -89,13 +99,6 @@ async function handleMessage(message, sender) {
 
     case "GET_SETTINGS":
       return { ok: true, settings: await getSettings() };
-
-    case "B2_SETTINGS_CHANGED":
-      clearB2UploadCaches();
-      return { ok: true };
-
-    case "TEST_B2_UPLOAD":
-      return testBackblazeConnection(await getSettings());
 
     default:
       return { ok: false, error: "Unknown message type" };
@@ -452,24 +455,8 @@ async function capturePage(payload, tabId) {
     }
 
     const capturedAt = new Date();
-    let b2Upload = null;
-    let b2FileName = "";
-    if (settings.b2Enabled !== false) {
-      b2FileName = buildScreenshotObjectKey({
-        prefix: settings.b2KeyPrefix || "puma",
-        profile: settings.b2ProfileName || "upwork",
-        downloadFolder: jobFolder,
-        step,
-        trigger,
-        when: capturedAt
-      });
-      b2Upload = await uploadPngToB2({
-        settings,
-        objectKey: b2FileName,
-        dataUrl
-      });
-      if (b2Upload.fileName) b2FileName = b2Upload.fileName;
-    }
+    const b2Upload = await uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl });
+    const b2FileName = b2Upload.ok ? b2Upload.fileName : "";
 
     const capture = {
       id: captureId,
@@ -478,8 +465,7 @@ async function capturePage(payload, tabId) {
       pageUrl: payload?.pageUrl || record.url,
       screenshotFileName,
       b2FileName,
-      b2FileId: b2Upload?.fileId || "",
-      b2Error: b2Upload && !b2Upload.ok ? b2Upload.error : "",
+      b2Error: b2Upload.ok ? "" : b2Upload.error,
       fullPage,
       capturedAt: capturedAt.toISOString()
     };
@@ -529,6 +515,26 @@ async function capturePage(payload, tabId) {
     };
   } finally {
     captureQueue.delete(targetTabId);
+  }
+}
+
+// Asks the backend for a signed link and PUTs the PNG to it. Never throws: failures are reported in the result.
+async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl }) {
+  if (!(await getAuth())) return { ok: false, error: "not logged in" };
+  try {
+    const job = String(jobFolder || "").split("/").filter(Boolean).pop() || "job";
+    const { url, key, headers } = await getUploadUrl({
+      job,
+      step,
+      trigger,
+      capturedAt: localIsoWithOffset(capturedAt)
+    });
+    const body = await (await fetch(dataUrl)).blob();
+    const response = await fetch(url, { method: "PUT", headers, body });
+    if (!response.ok) throw new Error(`Upload failed (HTTP ${response.status})`);
+    return { ok: true, fileName: key };
+  } catch (err) {
+    return { ok: false, error: err.message || "Upload failed" };
   }
 }
 
