@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bid Track Local</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="header-row">
+    <div>
+      <h1>Bid Track Local</h1>
+      <p class="subtitle">Full-page screenshot tracker</p>
+    </div>
+    <button id="pin-panel" class="btn pin" type="button">Pin</button>
+  </header>
+
+  <section id="status-section">
+    <div id="tracking-status" class="status-card">Loading...</div>
+  </section>
+
+  <section class="actions">
+    <button id="open-options" class="btn primary">Settings & Records</button>
+    <button id="refresh" class="btn secondary">Refresh</button>
+  </section>
+
+  <section id="current-record" class="hidden">
+    <h2>Current Job</h2>
+    <div id="record-preview"></div>
+  </section>
+
+  <footer>
+    <small>Click the Save button on the job page before each Next or Submit step.</small>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

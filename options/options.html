@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bid Track Local - Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Bid Track Local</h1>
+      <p>Full-page screenshot tracking for job applications. Saves PNG + JSON to Downloads, and uploads each PNG to Backblaze.</p>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="settings">Settings</button>
+      <button class="tab" data-tab="records">Application Records</button>
+    </nav>
+
+    <section id="tab-settings" class="tab-panel active">
+      <h2>Capture Settings</h2>
+      <form id="settings-form" class="stack-form">
+        <label class="checkbox">
+          <input type="checkbox" name="showCaptureButton" checked />
+          Show the Save button on job application pages
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="autoCapture" />
+          Also try auto-capture on Next / Submit (experimental — many job boards are not detected)
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="autoSaveScreenshots" checked />
+          Automatically download screenshot PNG files
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="autoSaveJson" checked />
+          Download job JSON once when the job folder is created
+        </label>
+        <label>Downloads root folder<input name="screenshotFolder" value="BidTrackScreenshots" /></label>
+
+        <h2>Backblaze B2</h2>
+        <label class="checkbox">
+          <input type="checkbox" name="b2Enabled" checked />
+          Upload each screenshot to Backblaze
+        </label>
+        <label>Bucket name<input name="b2BucketName" value="bid-screenshots" autocomplete="off" /></label>
+        <label>Bucket ID<input name="b2BucketId" value="0f6e97821fb60a18ab150c15" autocomplete="off" /></label>
+        <label>Key ID (application key ID, starts with 005)<input name="b2KeyId" value="005fe72f6a8b5c50000000001" autocomplete="off" /></label>
+        <p id="b2-key-status" class="hint warn">Application key: not saved yet — paste it below and click Save Settings.</p>
+        <label>Application key<input name="b2ApplicationKey" type="password" autocomplete="new-password" /></label>
+        <label>Member folder (company)<input name="b2KeyPrefix" value="puma" autocomplete="off" /></label>
+        <label>Profile name (e.g. upwork, freelancer)<input name="b2ProfileName" value="upwork" autocomplete="off" /></label>
+        <label>S3 region<input name="b2S3Region" value="us-east-005" autocomplete="off" /></label>
+        <label>S3 endpoint<input name="b2S3Endpoint" value="https://s3.us-east-005.backblazeb2.com" autocomplete="off" /></label>
+        <p class="hint">
+          Uploads use Backblaze’s S3-compatible API (<code>us-east-005</code>). Paths must start with
+          <code>puma/</code> to match the restricted application key.
+        </p>
+        <button id="test-b2" class="btn secondary" type="button">Test Backblaze upload</button>
+        <span id="b2-test-status" class="save-status"></span>
+        <p class="hint">
+          Backblaze does not create date folders. Each file is stored as
+          <code>puma/2026-10-03/upwork/job-name/step1_step_2026-10-03_093015.png</code>
+          using your local date and time, so files from the same minute do not overwrite each other.
+        </p>
+        <p class="hint">
+          Each job application also gets its own folder under Downloads.
+          Click the blue <strong>Save</strong> button on the right before each Next or Submit step.
+        </p>
+      </form>
+      <button id="save-settings" class="btn primary">Save Settings</button>
+      <span id="settings-status" class="save-status"></span>
+    </section>
+
+    <section id="tab-records" class="tab-panel">
+      <h2>Application Records</h2>
+      <div id="records-list"></div>
+    </section>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
