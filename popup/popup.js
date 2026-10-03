@@ -54,6 +54,7 @@ async function showLoggedOut() {
   const noticeEl = $("auth-notice");
   noticeEl.textContent = authNotice || "";
   noticeEl.classList.toggle("hidden", !authNotice);
+  if (authNotice) showTab("login"); // logged out by a 401: most bidders still have their password
 }
 
 function showTab(which) {
