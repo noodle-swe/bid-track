@@ -98,6 +98,16 @@ header h1 {
   outline-offset: 1px;
 }
 
+.auth-form input:user-invalid {
+  border-color: #f87171;
+}
+
+.field-hint {
+  margin: 0 0 2px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 .auth-form .btn {
   margin-top: 8px;
 }

@@ -27,14 +27,18 @@
       <label for="reg-code">Invite code</label>
       <input id="reg-code" type="text" required autocomplete="off" spellcheck="false" />
       <label for="reg-username">Username</label>
-      <input id="reg-username" type="text" required autocomplete="username" spellcheck="false" />
+      <input id="reg-username" type="text" required autocomplete="off" spellcheck="false"
+        pattern="[A-Za-z0-9._\-]{3,40}" title="3–40 characters: letters, numbers, . _ -"
+        aria-describedby="reg-username-hint" />
+      <p id="reg-username-hint" class="field-hint">3–40 characters: letters, numbers, . _ -</p>
       <label for="reg-password">Password</label>
       <input id="reg-password" type="password" required minlength="8" autocomplete="new-password" />
       <button class="btn primary" type="submit">Register</button>
     </form>
     <form id="form-login" class="auth-form hidden">
       <label for="login-username">Username</label>
-      <input id="login-username" type="text" required autocomplete="username" spellcheck="false" />
+      <input id="login-username" type="text" required autocomplete="username" spellcheck="false"
+        pattern="[A-Za-z0-9._\-]{3,40}" title="3–40 characters: letters, numbers, . _ -" />
       <label for="login-password">Password</label>
       <input id="login-password" type="password" required autocomplete="current-password" />
       <button class="btn primary" type="submit">Log in</button>
