@@ -3,31 +3,60 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bid Track Local</title>
+  <title>Bid Track</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <header class="header-row">
     <div>
-      <h1>Bid Track Local</h1>
+      <h1>Bid Track</h1>
       <p class="subtitle">Full-page screenshot tracker</p>
     </div>
-    <button id="pin-panel" class="btn pin" type="button">Pin</button>
+    <button id="logout" class="btn link hidden" type="button">Log out</button>
   </header>
 
-  <section id="status-section">
-    <div id="tracking-status" class="status-card">Loading...</div>
+  <p id="account-line" class="account-line hidden"></p>
+
+  <section id="auth" class="hidden">
+    <p id="auth-notice" class="notice hidden" role="alert"></p>
+    <div class="tabs" role="tablist">
+      <button id="tab-register" class="tab active" type="button" role="tab" aria-selected="true">Register</button>
+      <button id="tab-login" class="tab" type="button" role="tab" aria-selected="false">Log in</button>
+    </div>
+    <form id="form-register" class="auth-form" autocomplete="off">
+      <label for="reg-code">Invite code</label>
+      <input id="reg-code" type="text" required autocomplete="off" spellcheck="false" />
+      <label for="reg-username">Username</label>
+      <input id="reg-username" type="text" required autocomplete="username" spellcheck="false" />
+      <label for="reg-password">Password</label>
+      <input id="reg-password" type="password" required minlength="8" autocomplete="new-password" />
+      <button class="btn primary" type="submit">Register</button>
+    </form>
+    <form id="form-login" class="auth-form hidden">
+      <label for="login-username">Username</label>
+      <input id="login-username" type="text" required autocomplete="username" spellcheck="false" />
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" required autocomplete="current-password" />
+      <button class="btn primary" type="submit">Log in</button>
+    </form>
+    <p id="auth-error" class="form-error hidden" role="alert"></p>
   </section>
 
-  <section class="actions">
-    <button id="open-options" class="btn primary">Settings & Records</button>
-    <button id="refresh" class="btn secondary">Refresh</button>
-  </section>
+  <div id="main" class="hidden">
+    <section id="status-section">
+      <div id="tracking-status" class="status-card">Loading...</div>
+    </section>
 
-  <section id="current-record" class="hidden">
-    <h2>Current Job</h2>
-    <div id="record-preview"></div>
-  </section>
+    <section class="actions">
+      <button id="open-options" class="btn primary">Settings & Records</button>
+      <button id="refresh" class="btn secondary">Refresh</button>
+    </section>
+
+    <section id="current-record" class="hidden">
+      <h2>Current Job</h2>
+      <div id="record-preview"></div>
+    </section>
+  </div>
 
   <footer>
     <small>Click the Save button on the job page before each Next or Submit step.</small>

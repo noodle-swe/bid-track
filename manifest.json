@@ -9,8 +9,7 @@
     "tabs",
     "downloads",
     "scripting",
-    "debugger",
-    "sidePanel"
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -27,9 +26,6 @@
       "128": "icons/icon128.png"
     },
     "default_title": "Bid Track"
-  },
-  "side_panel": {
-    "default_path": "sidepanel/sidepanel.html"
   },
   "options_ui": {
     "page": "options/options.html",

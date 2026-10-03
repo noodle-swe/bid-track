@@ -23,12 +23,94 @@ header h1 {
   font-size: 18px;
 }
 
-.btn.pin {
+.btn.link {
   background: #1e293b;
   color: #93c5fd;
   border: 1px solid #3b82f6;
   padding: 6px 12px;
   flex-shrink: 0;
+}
+
+.account-line {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #cbd5e1;
+  word-break: break-word;
+}
+
+.notice {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #422006;
+  border: 1px solid #b45309;
+  color: #fde68a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+  border-bottom: 1px solid #334155;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #94a3b8;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: #eff6ff;
+  border-bottom-color: #3b82f6;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.auth-form label {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.auth-form input {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+
+.auth-form input:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+.auth-form .btn {
+  margin-top: 8px;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.form-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #fca5a5;
 }
 
 .subtitle {

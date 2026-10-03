@@ -1,23 +1,93 @@
+import { getAuth, register, login, logout, me, ApiError } from "../lib/api.js";
+
+const $ = (id) => document.getElementById(id);
+
 document.addEventListener("DOMContentLoaded", async () => {
-  document.getElementById("open-options").addEventListener("click", () => {
+  $("open-options").addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });
-
-  document.getElementById("refresh").addEventListener("click", loadStatus);
-  document.getElementById("pin-panel").addEventListener("click", pinSidePanel);
-  await loadStatus();
+  $("refresh").addEventListener("click", loadStatus);
+  $("tab-register").addEventListener("click", () => showTab("register"));
+  $("tab-login").addEventListener("click", () => showTab("login"));
+  $("form-register").addEventListener("submit", (e) =>
+    submitAuth(e, () => register($("reg-code").value.trim(), $("reg-username").value.trim(), $("reg-password").value))
+  );
+  $("form-login").addEventListener("submit", (e) =>
+    submitAuth(e, () => login($("login-username").value.trim(), $("login-password").value))
+  );
+  $("logout").addEventListener("click", async () => {
+    await logout();
+    await render();
+  });
+  await render();
 });
 
-async function pinSidePanel() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
+async function render() {
+  let auth = await getAuth();
+  if (auth) {
+    // Refresh the header. A 401 clears auth and sets the notice; other errors
+    // (offline, server down) keep the cached bidder.
+    await me().catch(() => null);
+    auth = await getAuth();
+  }
+  if (auth) showLoggedIn(auth.bidder);
+  else await showLoggedOut();
+}
 
-  await chrome.sidePanel.setOptions({
-    tabId: tab.id,
-    path: "sidepanel/sidepanel.html",
-    enabled: true
-  });
-  await chrome.sidePanel.open({ tabId: tab.id });
+function showLoggedIn(bidder) {
+  $("auth").classList.add("hidden");
+  $("main").classList.remove("hidden");
+  $("logout").classList.remove("hidden");
+  const line = $("account-line");
+  line.textContent = `${bidder.name} · ${bidder.profileName || "No profile"} · uploading to ${bidder.folder}/`;
+  line.classList.remove("hidden");
+  loadStatus();
+}
+
+async function showLoggedOut() {
+  $("main").classList.add("hidden");
+  $("logout").classList.add("hidden");
+  $("account-line").classList.add("hidden");
+  $("auth").classList.remove("hidden");
+  setError("");
+  const { authNotice } = await chrome.storage.local.get("authNotice");
+  const noticeEl = $("auth-notice");
+  noticeEl.textContent = authNotice || "";
+  noticeEl.classList.toggle("hidden", !authNotice);
+}
+
+function showTab(which) {
+  const isRegister = which === "register";
+  $("tab-register").classList.toggle("active", isRegister);
+  $("tab-login").classList.toggle("active", !isRegister);
+  $("tab-register").setAttribute("aria-selected", String(isRegister));
+  $("tab-login").setAttribute("aria-selected", String(!isRegister));
+  $("form-register").classList.toggle("hidden", !isRegister);
+  $("form-login").classList.toggle("hidden", isRegister);
+  setError("");
+}
+
+function setError(message) {
+  const el = $("auth-error");
+  el.textContent = message;
+  el.classList.toggle("hidden", !message);
+}
+
+async function submitAuth(event, action) {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  setError("");
+  try {
+    await action(); // register()/login() clear authNotice on success
+    form.reset();
+    await render();
+  } catch (err) {
+    setError(err instanceof ApiError ? err.message : "Could not reach the server. Check Settings > Server URL.");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadStatus() {
