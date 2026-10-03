@@ -663,11 +663,11 @@
         showToast("Saved locally — log in to Bid Track so this bid counts.");
         return;
       }
-      const uploadNote = result.b2Upload?.ok
-        ? "uploaded"
-        : result.b2Upload?.error
-          ? `upload failed: ${result.b2Upload.error}`
-          : "PNG downloaded";
+      if (result.b2Upload?.error) {
+        showToast(`Saved locally — upload failed (${result.b2Upload.error}). Click Save again to retry.`);
+        return;
+      }
+      const uploadNote = result.b2Upload?.ok ? "uploaded" : "PNG downloaded";
       showToast(`Step ${result.capture?.step || activeRecord.stepCount} saved · ${pageType} · ${uploadNote}`);
       return;
     }

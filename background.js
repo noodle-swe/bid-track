@@ -518,6 +518,8 @@ async function capturePage(payload, tabId) {
   }
 }
 
+const UPLOAD_TIMEOUT_MS = 60000;
+
 // Asks the backend for a signed link and PUTs the PNG to it. Never throws: failures are reported in the result.
 async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl }) {
   if (!(await getAuth())) return { ok: false, error: "not logged in" };
@@ -530,11 +532,12 @@ async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl 
       capturedAt: localIsoWithOffset(capturedAt)
     });
     const body = await (await fetch(dataUrl)).blob();
-    const response = await fetch(url, { method: "PUT", headers, body });
-    if (!response.ok) throw new Error(`Upload failed (HTTP ${response.status})`);
+    const response = await fetch(url, { method: "PUT", headers, body, signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return { ok: true, fileName: key };
   } catch (err) {
-    return { ok: false, error: err.message || "Upload failed" };
+    if (err?.name === "TimeoutError") return { ok: false, error: `no answer in ${UPLOAD_TIMEOUT_MS / 1000} s` };
+    return { ok: false, error: err.message || "unknown error" };
   }
 }
 
