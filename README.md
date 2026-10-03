@@ -4,6 +4,8 @@ Full-page screenshots and JSON metadata saved to **Chrome Downloads**. When you 
 
 ## Install
 
+Remove any older "Bid Track Local" extension first (or unzip this version over its folder and click Reload). Two copies side by side double-count or lose bids.
+
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. **Load unpacked** and select this folder
