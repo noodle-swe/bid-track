@@ -1,6 +1,10 @@
 (function () {
   "use strict";
 
+  // The popup may inject this script into tabs opened before the extension loaded.
+  if (window.__bidTrackLoaded) return;
+  window.__bidTrackLoaded = true;
+
   const EXCLUDED = ["linkedin.com", "indeed.com"];
 
   const EXPIRED_PAGE_PATTERNS = [
@@ -26,7 +30,6 @@
   let lastCaptureKey = "";
   let lastCaptureAt = 0;
   let lastSyncedMetaKey = "";
-  let settings = { showCaptureButton: true, autoCapture: false };
 
   function isIcimsHost() {
     return /icims\.com/i.test(location.hostname);
@@ -68,20 +71,25 @@
   }
 
   if (!shouldBootstrapFrame()) return;
+  // The popup picks a frame to capture from among those that set this.
+  window.__bidTrackBootstrapped = true;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "PING") {
       sendResponse({ ok: true, activeRecordId: activeRecord?.id || null, stepCount: activeRecord?.stepCount || 0 });
       return false;
     }
+    if (message.type === "CAPTURE_NOW") {
+      ready.then(() => requestPageCapture("step")).then(sendResponse);
+      return true;
+    }
     if (message.type === "RECORD_UPDATED" && message.record) {
       activeRecord = message.record;
-      updateCaptureUi();
     }
     return false;
   });
 
-  bootstrap();
+  const ready = bootstrap();
 
   function hasExtensionContext() {
     try {
@@ -98,31 +106,15 @@
       const ping = await sendMessage({ type: "PING" });
       if (!ping?.ok) return;
 
-      settings = await getLocalSettings();
       await initJobRecord();
-      initCaptureButton();
-      watchAutoCapture();
       watchJobContent();
       watchApplicationPanel();
       watchSpaNavigation();
       watchPageLifecycle();
       initDone = true;
-      updateCaptureUi();
     } catch (err) {
       console.warn("[Bid Track] bootstrap failed:", err);
     }
-  }
-
-  async function getLocalSettings() {
-    try {
-      const result = await sendMessage({ type: "GET_SETTINGS" });
-      if (result?.ok && result.settings) {
-        return { showCaptureButton: true, autoCapture: false, ...result.settings };
-      }
-    } catch {
-      // Background unavailable in this frame.
-    }
-    return { showCaptureButton: true, autoCapture: false };
   }
 
   function isExcluded() {
@@ -374,7 +366,6 @@
     if (!activeRecord?.id) {
       await syncActiveRecordFromBackground();
     }
-    updateCaptureUi();
   }
 
   async function syncActiveRecordFromBackground() {
@@ -395,7 +386,6 @@
     });
 
     applyRecordResult(result);
-    updateCaptureUi();
     return activeRecord;
   }
 
@@ -405,49 +395,6 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
-  }
-
-  function isExtensionUI(el) {
-    return !!el?.closest?.(".btrack-capture-btn, .btrack-page-badge, .btrack-toast");
-  }
-
-  const NAV_BUTTON_PATTERN = /\b(next|continue|submit|apply|review|finish|save and continue)\b/i;
-
-  function getNavigationButton(el) {
-    if (!el || isExtensionUI(el)) return null;
-    const btn = el.closest('button, [role="button"], input[type="submit"], a');
-    if (!btn || isExtensionUI(btn)) return null;
-
-    const text = normalizeFieldText(
-      btn.innerText || btn.value || btn.getAttribute("aria-label") || btn.getAttribute("title") || ""
-    );
-    if (!text || text.length > 64) return null;
-    if (!NAV_BUTTON_PATTERN.test(text)) return null;
-    if (/^(save step|bid track)/i.test(text)) return null;
-    return btn;
-  }
-
-  function getCaptureTrigger(btn) {
-    const text = normalizeFieldText(
-      btn.innerText || btn.value || btn.getAttribute("aria-label") || btn.getAttribute("title") || ""
-    ).toLowerCase();
-    if (/\b(submit|apply|finish)\b/.test(text)) return "submit";
-    return "next";
-  }
-
-  function watchAutoCapture() {
-    if (settings.autoCapture === false) return;
-
-    document.addEventListener(
-      "click",
-      (e) => {
-        if (!initDone || !activeRecord?.id || settings.autoCapture === false) return;
-        const btn = getNavigationButton(e.target);
-        if (!btn) return;
-        void requestPageCapture(getCaptureTrigger(btn));
-      },
-      true
-    );
   }
 
   function normalizeFieldText(text) {
@@ -472,10 +419,7 @@
         hasValidJobDescription(description) &&
         !getPageContext().pageError;
 
-      if (!ready) {
-        updateCaptureUi();
-        return;
-      }
+      if (!ready) return;
 
       if (!activeRecord?.id || !hasValidJobDescription(activeRecord.jobDescription)) {
         await ensureActiveRecord(true);
@@ -486,7 +430,6 @@
           await refreshJobMeta();
         }
       }
-      updateCaptureUi();
     }, 400);
 
     const observer = new MutationObserver(handleContent);
@@ -506,7 +449,6 @@
     const rerun = debounce(async () => {
       if (!initDone) return;
       await initJobRecord();
-      updateCaptureUi();
     }, 500);
 
     window.addEventListener("popstate", rerun);
@@ -550,50 +492,9 @@
     setInterval(handlePanel, 3000);
   }
 
-  function ensureCaptureButton() {
-    if (document.getElementById("btrack-capture-btn")) return;
-    if (!document.body) return;
-    initCaptureButton();
-  }
-
-  function initCaptureButton() {
-    if (document.getElementById("btrack-capture-btn")) return;
-
-    const btn = document.createElement("button");
-    btn.id = "btrack-capture-btn";
-    btn.type = "button";
-    btn.className = "btrack-capture-btn";
-    btn.setAttribute("aria-label", "Save step screenshot before Next or Submit");
-    btn.innerHTML = `
-      <span class="btrack-capture-icon" aria-hidden="true">
-        <svg viewBox="0 0 48 56" width="28" height="34" fill="none">
-          <path class="btrack-doc-sheet" d="M8 2h22l12 12v38a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4z"/>
-          <path class="btrack-doc-fold" d="M30 2v10a2 2 0 0 0 2 2h10"/>
-          <path class="btrack-doc-arrow" d="M24 22v16m0 0l-7-7m7 7l7-7" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </span>
-      <span class="btrack-capture-title">Save</span>
-      <span class="btrack-capture-sub">Click before Next</span>
-    `;
-
-    const stopBubble = (e) => e.stopPropagation();
-    ["pointerdown", "mousedown", "mouseup", "touchstart", "touchend"].forEach((eventName) => {
-      btn.addEventListener(eventName, stopBubble, true);
-    });
-
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      requestPageCapture("step");
-    });
-
-    document.body.appendChild(btn);
-  }
-
   function watchPageLifecycle() {
     const recover = debounce(async () => {
       if (!initDone) return;
-      ensureCaptureButton();
       if (!activeRecord?.id) {
         await syncActiveRecordFromBackground();
       }
@@ -602,78 +503,65 @@
       } else {
         await ensureActiveRecord(true);
       }
-      updateCaptureUi();
     }, 350);
 
     window.addEventListener("pageshow", recover);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") recover();
-    });
+    });  }
 
-    const buttonGuard = new MutationObserver(() => {
-      if (!initDone) return;
-      if (!document.getElementById("btrack-capture-btn") && document.body) {
-        ensureCaptureButton();
-        updateCaptureUi();
-      }
-    });
-    buttonGuard.observe(document.documentElement, { childList: true, subtree: true });
-  }
-
+  // Captures the tab for the active job record. Returns
+  // { ok: true, step, fullPage, upload: { ok, error } } or { ok: false, error } for the popup to show.
   async function requestPageCapture(trigger) {
     const captureKey = `${trigger}:${location.href}:${activeRecord?.stepCount || 0}`;
     const now = Date.now();
-    if (capturePending) return;
-    if (lastCaptureKey === captureKey && now - lastCaptureAt < 1500) return;
-
-    await ensureActiveRecord(true);
-    if (!activeRecord?.id) {
-      showToast("Bid Track: waiting for job description on this page");
-      return;
+    if (capturePending) return { ok: false, error: "A screenshot is already being saved" };
+    if (lastCaptureKey === captureKey && now - lastCaptureAt < 1500) {
+      return { ok: false, error: "Just saved — wait a moment" };
     }
 
+    await ensureActiveRecord(true);
+    if (!activeRecord?.id) return { ok: false, error: "No job detected on this page" };
+
     capturePending = true;
-    updateCaptureUi();
-
-    const page = getPageContext();
-    const result = await sendMessage({
-      type: "CAPTURE_PAGE",
-      payload: {
-        recordId: activeRecord.id,
-        trigger,
-        pageUrl: location.href,
-        title: getPageTitle(),
-        jobDescription: extractJobDescription(),
-        ...getJobIdentityHints(),
-        url: location.href,
-        pageText: page.pageText,
-        pageError: page.pageError
-      }
-    });
-
-    capturePending = false;
-    updateCaptureUi();
+    let result;
+    try {
+      const page = getPageContext();
+      // Full-page stitching plus the upload can take a while; the default 12 s is too short.
+      result = await sendMessage(
+        {
+          type: "CAPTURE_PAGE",
+          payload: {
+            recordId: activeRecord.id,
+            trigger,
+            pageUrl: location.href,
+            title: getPageTitle(),
+            jobDescription: extractJobDescription(),
+            ...getJobIdentityHints(),
+            url: location.href,
+            pageText: page.pageText,
+            pageError: page.pageError
+          }
+        },
+        120000
+      );
+    } finally {
+      capturePending = false;
+    }
 
     if (result?.ok) {
       activeRecord = result.record;
       lastCaptureKey = captureKey;
       lastCaptureAt = Date.now();
-      const pageType = result.fullPage ? "Full page" : "Viewport";
-      if (result.b2Upload?.error === "not logged in") {
-        showToast("Saved locally — log in to Bid Track so this bid counts.");
-        return;
-      }
-      if (result.b2Upload?.error) {
-        showToast(`Saved locally — upload failed (${result.b2Upload.error}). Click Save again to retry.`);
-        return;
-      }
-      const uploadNote = result.b2Upload?.ok ? "uploaded" : "PNG downloaded";
-      showToast(`Step ${result.capture?.step || activeRecord.stepCount} saved · ${pageType} · ${uploadNote}`);
-      return;
+      return {
+        ok: true,
+        step: result.capture?.step || activeRecord.stepCount,
+        fullPage: !!result.fullPage,
+        upload: { ok: !!result.b2Upload?.ok, error: result.b2Upload?.error || "" }
+      };
     }
-
-    if (result?.skipped) return;
-    showToast(result?.error || "Could not capture screenshot");
+    if (result?.skipped) return { ok: false, error: result.reason || "A screenshot is already being saved" };
+    return { ok: false, error: result?.error || "Could not capture screenshot" };
   }
 
   async function refreshJobMeta() {
@@ -701,7 +589,6 @@
     ) {
       activeRecord = null;
     }
-    updateCaptureUi();
   }
 
   function extractJobDescriptionFromRoot(root) {
@@ -788,95 +675,6 @@
     const clone = el.cloneNode(true);
     clone.querySelectorAll("script, style, noscript, iframe, nav, footer, form").forEach((node) => node.remove());
     return (clone.innerText || "").replace(/\s+/g, " ").trim();
-  }
-
-  function canShowCaptureButton() {
-    const title = getPageTitle();
-    const page = getPageContext();
-    if (page.pageError || !hasValidJobTitle(title) || !activeRecord?.id) return false;
-
-    const description = activeRecord.jobDescription || extractJobDescription();
-    if (hasValidJobDescription(description)) return true;
-
-    const platform = detectAtsPlatform();
-    const onApplyFlow =
-      hasApplicationForm() &&
-      (platform === "greenhouse" || platform === "lever" || platform === "workday");
-    const hints = getJobIdentityHints();
-
-    if (onApplyFlow) {
-      if ((activeRecord.stepCount || 0) > 0 || !!(activeRecord.captures || []).length) return true;
-      if (platform === "greenhouse" && hints.jobId) return true;
-    }
-
-    return false;
-  }
-
-  function updateCaptureUi() {
-    ensureCaptureButton();
-    const btn = document.getElementById("btrack-capture-btn");
-    let badge = document.getElementById("btrack-page-badge");
-    const ready = canShowCaptureButton();
-    const showButton = ready && settings.showCaptureButton !== false;
-
-    if (btn) {
-      btn.style.display = showButton ? "flex" : "none";
-      btn.disabled = capturePending;
-      btn.classList.toggle("btrack-capture-btn-busy", capturePending);
-      const step = activeRecord?.stepCount || 0;
-      const sub = btn.querySelector(".btrack-capture-sub");
-      if (sub) {
-        sub.textContent = capturePending ? "Saving…" : step ? `${step} saved` : "Click before Next";
-      }
-      btn.setAttribute(
-        "aria-label",
-        capturePending
-          ? "Saving screenshot"
-          : step
-            ? `Save step screenshot · ${step} saved`
-            : "Save step screenshot before Next or Submit"
-      );
-    }
-
-    if (!ready) {
-      badge?.remove();
-      const page = getPageContext();
-      if (page.pageError || !hasValidJobTitle(getPageTitle())) {
-        badge = document.createElement("div");
-        badge.id = "btrack-page-badge";
-        badge.className = "btrack-page-badge btrack-page-badge-waiting";
-        badge.textContent = page.pageError
-          ? "Bid Track: job expired or not found"
-          : "Bid Track: invalid job page";
-        document.body.appendChild(badge);
-      } else if (
-        hasApplicationForm() &&
-        !hasValidJobDescription(activeRecord?.jobDescription || extractJobDescription())
-      ) {
-        badge = document.createElement("div");
-        badge.id = "btrack-page-badge";
-        badge.className = "btrack-page-badge btrack-page-badge-waiting";
-        badge.textContent = "Bid Track waiting for job description";
-        document.body.appendChild(badge);
-      }
-      return;
-    }
-
-    badge?.remove();
-  }
-
-  function showToast(message) {
-    let toast = document.getElementById("btrack-toast");
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.id = "btrack-toast";
-      toast.className = "btrack-toast";
-      document.body.appendChild(toast);
-    }
-    toast.textContent = message;
-    toast.classList.add("btrack-toast-visible");
-    clearTimeout(showToast._timer);
-    showToast._timer = setTimeout(() => toast.classList.remove("btrack-toast-visible"), 3200);
   }
 
   function sendMessage(message, timeoutMs = 12000) {

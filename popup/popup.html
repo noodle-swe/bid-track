@@ -7,64 +7,38 @@
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <header class="header-row">
-    <div>
-      <h1>Bid Track</h1>
-      <p class="subtitle">Full-page screenshot tracker</p>
+  <header>
+    <h1>Bid Track</h1>
+    <div id="account" class="account hidden">
+      <span id="username"></span>
+      <span aria-hidden="true">·</span>
+      <button id="logout" class="link" type="button">Log out</button>
     </div>
-    <button id="logout" class="btn link hidden" type="button">Log out</button>
   </header>
 
-  <p id="account-line" class="account-line hidden"></p>
-
   <section id="auth" class="hidden">
-    <p id="auth-notice" class="notice hidden" role="alert"></p>
-    <div class="tabs" role="tablist">
-      <button id="tab-register" class="tab active" type="button" role="tab" aria-selected="true">Register</button>
-      <button id="tab-login" class="tab" type="button" role="tab" aria-selected="false">Log in</button>
-    </div>
-    <form id="form-register" class="auth-form" autocomplete="off">
-      <label for="reg-code">Invite code</label>
-      <input id="reg-code" type="text" required autocomplete="off" spellcheck="false" />
-      <label for="reg-username">Username</label>
-      <input id="reg-username" type="text" required autocomplete="off" spellcheck="false"
-        pattern="[A-Za-z0-9._\-]{3,40}" title="3–40 characters: letters, numbers, . _ -"
-        aria-describedby="reg-username-hint" />
-      <p id="reg-username-hint" class="field-hint">3–40 characters: letters, numbers, . _ -</p>
-      <label for="reg-password">Password</label>
-      <input id="reg-password" type="password" required minlength="8" autocomplete="new-password" />
-      <button class="btn primary" type="submit">Register</button>
-    </form>
-    <form id="form-login" class="auth-form hidden">
-      <label for="login-username">Username</label>
-      <input id="login-username" type="text" required autocomplete="username" spellcheck="false"
+    <p id="auth-notice" class="notice hidden" role="status"></p>
+    <form id="auth-form" class="form">
+      <label for="username-input">Username</label>
+      <input id="username-input" type="text" required autocomplete="username" spellcheck="false"
         pattern="[A-Za-z0-9._\-]{3,40}" title="3–40 characters: letters, numbers, . _ -" />
-      <label for="login-password">Password</label>
-      <input id="login-password" type="password" required autocomplete="current-password" />
-      <button class="btn primary" type="submit">Log in</button>
+      <label for="password-input">Password</label>
+      <input id="password-input" type="password" required minlength="8" autocomplete="current-password" />
+      <label for="invite-input">Invite code <span class="muted">(first time only)</span></label>
+      <input id="invite-input" type="text" autocomplete="off" spellcheck="false" />
+      <button id="auth-submit" class="btn primary" type="submit">Log in</button>
     </form>
-    <p id="auth-error" class="form-error hidden" role="alert"></p>
+    <p id="auth-error" class="error hidden" role="alert"></p>
   </section>
 
-  <div id="main" class="hidden">
-    <section id="status-section">
-      <div id="tracking-status" class="status-card">Loading...</div>
-    </section>
-
-    <section class="actions">
-      <button id="open-options" class="btn primary">Settings & Records</button>
-      <button id="refresh" class="btn secondary">Refresh</button>
-    </section>
-
-    <section id="current-record" class="hidden">
-      <h2>Current Job</h2>
-      <div id="record-preview"></div>
-    </section>
-  </div>
-
-  <footer>
-    <small>Click the Save button on the job page before each Next or Submit step.</small>
-  </footer>
+  <section id="main" class="hidden">
+    <button id="upload" class="btn primary" type="button">Upload Screenshot</button>
+    <p id="result" class="result hidden" role="status"></p>
+    <label class="check">
+      <input id="auto-download" type="checkbox" />
+      Automatically download the screenshots to local
+    </label>
+  </section>
 
   <script type="module" src="popup.js"></script>
 </body>

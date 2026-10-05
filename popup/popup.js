@@ -3,157 +3,130 @@ import { getAuth, register, login, logout, me, ApiError } from "../lib/api.js";
 const $ = (id) => document.getElementById(id);
 
 document.addEventListener("DOMContentLoaded", async () => {
-  $("open-options").addEventListener("click", () => {
-    chrome.runtime.openOptionsPage();
+  $("auth-form").addEventListener("submit", submitAuth);
+  $("invite-input").addEventListener("input", () => {
+    $("auth-submit").textContent = $("invite-input").value.trim() ? "Register" : "Log in";
   });
-  $("refresh").addEventListener("click", loadStatus);
-  $("tab-register").addEventListener("click", () => showTab("register"));
-  $("tab-login").addEventListener("click", () => showTab("login"));
-  $("form-register").addEventListener("submit", (e) =>
-    submitAuth(e, () => register($("reg-code").value.trim(), $("reg-username").value.trim(), $("reg-password").value))
-  );
-  $("form-login").addEventListener("submit", (e) =>
-    submitAuth(e, () => login($("login-username").value.trim(), $("login-password").value))
-  );
   $("logout").addEventListener("click", async () => {
     await logout();
     await render();
   });
+  $("upload").addEventListener("click", uploadScreenshot);
+  $("auto-download").addEventListener("change", saveAutoDownload);
   await render();
 });
 
 async function render() {
   let auth = await getAuth();
   if (auth) {
-    // Refresh the header. A 401 clears auth and sets the notice; other errors
-    // (offline, server down) keep the cached bidder.
+    // A 401 here clears auth and sets the notice; offline or server errors keep the cached login.
     await me().catch(() => null);
     auth = await getAuth();
   }
-  if (auth) showLoggedIn(auth.bidder);
-  else await showLoggedOut();
-}
+  const loggedIn = !!auth?.bidder;
+  $("auth").classList.toggle("hidden", loggedIn);
+  $("main").classList.toggle("hidden", !loggedIn);
+  $("account").classList.toggle("hidden", !loggedIn);
 
-function showLoggedIn(bidder) {
-  $("auth").classList.add("hidden");
-  $("main").classList.remove("hidden");
-  $("logout").classList.remove("hidden");
-  const line = $("account-line");
-  line.textContent = `${bidder.name} · ${bidder.profileName || "No profile"} · uploading to ${bidder.folder}/`;
-  line.classList.remove("hidden");
-  loadStatus();
-}
-
-async function showLoggedOut() {
-  $("main").classList.add("hidden");
-  $("logout").classList.add("hidden");
-  $("account-line").classList.add("hidden");
-  $("auth").classList.remove("hidden");
-  setError("");
+  if (loggedIn) {
+    $("username").textContent = auth.bidder.username || auth.bidder.name || "";
+    const { settings = {} } = await chrome.storage.local.get("settings");
+    $("auto-download").checked = settings.autoSaveScreenshots !== false;
+    setText("result", "");
+    return;
+  }
   const { authNotice } = await chrome.storage.local.get("authNotice");
-  const noticeEl = $("auth-notice");
-  noticeEl.textContent = authNotice || "";
-  noticeEl.classList.toggle("hidden", !authNotice);
-  if (authNotice) showTab("login"); // logged out by a 401: most bidders still have their password
+  setText("auth-notice", authNotice || "");
+  setText("auth-error", "");
 }
 
-function showTab(which) {
-  const isRegister = which === "register";
-  $("tab-register").classList.toggle("active", isRegister);
-  $("tab-login").classList.toggle("active", !isRegister);
-  $("tab-register").setAttribute("aria-selected", String(isRegister));
-  $("tab-login").setAttribute("aria-selected", String(!isRegister));
-  $("form-register").classList.toggle("hidden", !isRegister);
-  $("form-login").classList.toggle("hidden", isRegister);
-  setError("");
-}
-
-function setError(message) {
-  const el = $("auth-error");
-  el.textContent = message;
-  el.classList.toggle("hidden", !message);
-}
-
-async function submitAuth(event, action) {
+async function submitAuth(event) {
   event.preventDefault();
-  const form = event.target;
-  const button = form.querySelector("button[type=submit]");
+  const button = $("auth-submit");
+  const username = $("username-input").value.trim();
+  const password = $("password-input").value;
+  const inviteCode = $("invite-input").value.trim();
   button.disabled = true;
-  setError("");
+  setText("auth-error", "");
   try {
-    await action(); // register()/login() clear authNotice on success
-    form.reset();
+    if (inviteCode) await register(inviteCode, username, password);
+    else await login(username, password);
+    event.target.reset();
+    $("auth-submit").textContent = "Log in";
     await render();
   } catch (err) {
-    setError(err instanceof ApiError ? err.message : "Could not reach the server. Check Settings > Server URL.");
+    setText("auth-error", err instanceof ApiError ? err.message : "Something went wrong — try again");
   } finally {
     button.disabled = false;
   }
 }
 
-async function loadStatus() {
-  const statusEl = document.getElementById("tracking-status");
-  const recordSection = document.getElementById("current-record");
-  const previewEl = document.getElementById("record-preview");
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    statusEl.textContent = "No active tab found.";
-    statusEl.className = "status-card inactive";
-    return;
+async function uploadScreenshot() {
+  const button = $("upload");
+  button.disabled = true;
+  setText("result", "Saving…", "busy");
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !/^https?:/i.test(tab.url || "")) throw new Error("Open a job page first");
+    const frameId = await findCaptureFrame(tab.id);
+    showCaptureResult(await chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_NOW" }, { frameId }));
+  } catch (err) {
+    setText("result", friendlyError(err), "error");
+  } finally {
+    button.disabled = false;
   }
+  // An upload refused with 401 logs the extension out; show the login form and its notice.
+  if (!(await getAuth())) await render();
+}
 
-  const host = tab.url ? new URL(tab.url).hostname : "";
-  const excluded = /linkedin\.com|indeed\.com/i.test(host);
+// Frames where the page script is running (it marks them); the top frame is preferred so one
+// click captures once.
+async function bootstrappedFrames(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: () => !!window.__bidTrackBootstrapped
+  });
+  return results.filter((r) => r.result).map((r) => r.frameId);
+}
 
-  if (excluded) {
-    statusEl.innerHTML = `<strong>Excluded site</strong><br>${host}<br>LinkedIn and Indeed are not tracked.`;
-    statusEl.className = "status-card inactive";
-    recordSection.classList.add("hidden");
-    return;
+async function findCaptureFrame(tabId) {
+  let frames = await bootstrappedFrames(tabId);
+  if (!frames.length) {
+    // Tab opened before the extension was loaded: inject the page script as the manifest would.
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["content/content.js"] });
+    frames = await bootstrappedFrames(tabId);
   }
+  if (!frames.length) throw new Error("No job detected on this page");
+  return frames.includes(0) ? 0 : frames[0];
+}
 
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "PING" }).catch(() => null);
-
-  if (!response) {
-    statusEl.innerHTML = `<strong>Page not ready</strong><br>Reload the job page after installing Bid Track.`;
-    statusEl.className = "status-card inactive";
+function showCaptureResult(result) {
+  if (!result?.ok) {
+    setText("result", result?.error || "Could not capture this page", "error");
+  } else if (result.upload.ok) {
+    setText("result", `✓ Step ${result.step} saved · uploaded`, "ok");
+  } else if (result.upload.error === "not logged in") {
+    setText("result", `Step ${result.step} saved — log in so this bid counts`, "error");
   } else {
-    statusEl.innerHTML = `<strong>Tracking enabled</strong><br>${host}<br>${response.stepCount || 0} screenshot(s) captured`;
-    statusEl.className = "status-card active";
-  }
-
-  const recordRes = await chrome.runtime.sendMessage({ type: "GET_ACTIVE_RECORD" });
-  const record = recordRes?.record;
-
-  if (record) {
-    recordSection.classList.remove("hidden");
-    const capturesHtml = (record.captures || []).length
-      ? `<div class="capture-block"><strong>Screenshots</strong>${record.captures
-          .map(
-            (item) =>
-              `<div class="capture-item">Step ${item.step} · ${escapeHtml(item.trigger)} · ${escapeHtml(item.screenshotFileName || "saved")}</div>`
-          )
-          .join("")}</div>`
-      : `<div class="capture-block">No screenshots yet. Click Save on the job page before each step.</div>`;
-
-    previewEl.innerHTML = `
-      <div><strong>Title:</strong> ${escapeHtml(record.title || "Untitled")}</div>
-      <div><strong>Company:</strong> ${escapeHtml(record.companyName || "Unknown")}</div>
-      <div><strong>Job link:</strong> ${escapeHtml(record.url)}</div>
-      <div><strong>Save folder:</strong> Downloads/${escapeHtml(record.downloadFolder || "BidTrackScreenshots")}</div>
-      <div><strong>Status:</strong> ${escapeHtml(record.status)}</div>
-      <div><strong>Description:</strong> ${escapeHtml((record.jobDescription || "Not detected yet").slice(0, 240))}${(record.jobDescription || "").length > 240 ? "..." : ""}</div>
-      ${capturesHtml}
-    `;
-  } else {
-    recordSection.classList.add("hidden");
+    setText("result", `Step ${result.step} saved — upload failed (${result.upload.error}). Try again.`, "error");
   }
 }
 
-function escapeHtml(str) {
-  return String(str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function friendlyError(err) {
+  const message = err?.message || "";
+  if (/cannot access|cannot be scripted|extensions gallery/i.test(message)) return "Bid Track can't capture this page";
+  if (/receiving end does not exist/i.test(message)) return "No job detected on this page";
+  return message || "Could not capture this page";
+}
+
+async function saveAutoDownload() {
+  const { settings = {} } = await chrome.storage.local.get("settings");
+  await chrome.storage.local.set({ settings: { ...settings, autoSaveScreenshots: $("auto-download").checked } });
+}
+
+function setText(id, text, tone = "") {
+  const el = $(id);
+  el.textContent = text;
+  el.classList.toggle("hidden", !text);
+  if (id === "result") el.dataset.tone = tone;
 }

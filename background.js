@@ -97,9 +97,6 @@ async function handleMessage(message, sender) {
     case "PING":
       return { ok: true };
 
-    case "GET_SETTINGS":
-      return { ok: true, settings: await getSettings() };
-
     default:
       return { ok: false, error: "Unknown message type" };
   }

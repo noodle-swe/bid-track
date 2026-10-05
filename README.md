@@ -1,26 +1,36 @@
 # Bid Track
 
-Full-page screenshots and JSON metadata saved to **Chrome Downloads**. When you are logged in, each PNG is also uploaded to your Bid Track folder through a short-lived signed link from the Engineers backend. The extension holds no storage keys.
+Full-page screenshots of job applications. When you are logged in, each PNG is uploaded to your Bid Track folder
+through a short-lived signed link from the Engineers backend; the extension holds no storage keys. A copy can also
+be saved to Chrome Downloads.
 
 ## Install
 
-Remove any older "Bid Track Local" extension first (or unzip this version over its folder and click Reload). Two copies side by side double-count or lose bids.
+Remove any older "Bid Track Local" extension first (or unzip this version over its folder and click Reload). Two
+copies side by side double-count or lose bids.
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. **Load unpacked** and select this folder
-4. Click the extension icon and register with the invite code your manager sent you (choose a username and a password of at least 8 characters). If you are not logged in, screenshots are still saved locally, but they do not count as bids.
 
-## Settings
+## Use
 
-- **Downloads root folder**, default `BidTrackScreenshots`
-- Auto-download PNG / JSON toggles
-- **Advanced → Server URL**, default `https://engineersbackend-production.up.railway.app`. Change it only for a test server; blank restores the default.
+Everything is in the window that opens when you click the extension icon.
 
-Files appear under:
+- **Log in** with your username and password. The first time, also enter the invite code your manager sent you —
+  that registers you (username: 3–40 letters, numbers, `.`, `_` or `-`; password: at least 8 characters).
+- **Upload Screenshot** saves a full-page screenshot of the job page in the current tab and uploads it. Click it
+  for each step of an application (before Next, and before Submit). The line under the button shows the result.
+- **Automatically download the screenshots to local** also saves each PNG to
+  `Downloads/BidTrackScreenshots/<job-folder>/` (with a `job-info.json` for the job).
+- **Log out** next to your username.
 
-`Downloads/{root}/{job-folder}/step1_....png` and `job-info.json`
+## Server
 
-## Test
+The extension talks to `https://engineersbackend-production.up.railway.app`. For a test server, open the popup,
+right-click → Inspect, and run in the console:
 
-Open `test/test-multistep.html` (enable file URL access for the extension if needed).
+```js
+chrome.storage.local.set({ serverUrl: "http://localhost:8082" })   // test server
+chrome.storage.local.remove("serverUrl")                           // back to production
+```
