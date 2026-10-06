@@ -79,8 +79,22 @@
       sendResponse({ ok: true, activeRecordId: activeRecord?.id || null, stepCount: activeRecord?.stepCount || 0 });
       return false;
     }
+    if (message.type === "GET_APPLY_FLOW") {
+      const flow = detectApplyFlow();
+      // Remember multi-step on the job: its last page (Submit, no Next) would look like a one-page form.
+      if (flow === "multi" && activeRecord?.id) {
+        sendMessage({ type: "SET_APPLY_FLOW", payload: { recordId: activeRecord.id, flow } }).catch(() => {});
+      }
+      sendResponse({ flow });
+      return false;
+    }
     if (message.type === "CAPTURE_NOW") {
-      ready.then(() => requestPageCapture("step")).then(sendResponse);
+      ready
+        .then(() => requestPageCapture("step"))
+        .then((result) => {
+          showCaptureToast(result.feedback);
+          sendResponse(result);
+        });
       return true;
     }
     if (message.type === "RECORD_UPDATED" && message.record) {
@@ -401,6 +415,28 @@
     return String(text || "").replace(/\s+/g, " ").trim();
   }
 
+  const MULTI_STEP_BUTTON = /^(?:next|continue|save (?:and|&) continue|save (?:and|&) next|next step|proceed)\b(?! with)/;
+  const SUBMIT_BUTTON = /^(?:submit|send|apply)\b/;
+
+  // What this page says about the application: "multi" (Next/Continue button or a step indicator), "single" (a
+  // form with a Submit/Send button and no sign of more steps) or "unknown" (e.g. the job description page).
+  function detectApplyFlow() {
+    const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    const labels = Array.from(
+      document.querySelectorAll('button, input[type="submit"], input[type="button"], a[role="button"], [role="button"]')
+    )
+      .filter(visible)
+      .map((el) => (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().toLowerCase())
+      .filter(Boolean);
+    const stepIndicator =
+      !!document.querySelector('[aria-current="step"], [data-automation-id="progressBar"]') ||
+      /\bstep\s+\d+\s+(?:of|\/)\s+\d+\b/i.test(document.body?.innerText || "");
+    if (stepIndicator || labels.some((label) => MULTI_STEP_BUTTON.test(label))) return "multi";
+
+    const fields = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, select')).filter(visible);
+    return fields.length >= 3 && labels.some((label) => SUBMIT_BUTTON.test(label)) ? "single" : "unknown";
+  }
+
   function hasApplicationForm(root) {
     const scope = root || document;
     return !!scope.querySelector(
@@ -534,6 +570,7 @@
           payload: {
             recordId: activeRecord.id,
             trigger,
+            applyFlow: detectApplyFlow(),
             pageUrl: location.href,
             title: getPageTitle(),
             jobDescription: extractJobDescription(),
@@ -557,11 +594,58 @@
         ok: true,
         step: result.capture?.step || activeRecord.stepCount,
         fullPage: !!result.fullPage,
-        upload: { ok: !!result.b2Upload?.ok, error: result.b2Upload?.error || "" }
+        upload: { ok: !!result.b2Upload?.ok, error: result.b2Upload?.error || "" },
+        feedback: result.feedback
       };
     }
-    if (result?.skipped) return { ok: false, error: result.reason || "A screenshot is already being saved" };
-    return { ok: false, error: result?.error || "Could not capture screenshot" };
+    if (result?.skipped) return captureFailure(result.reason || "A screenshot is already being saved", "info");
+    return captureFailure(result?.error || "Could not capture screenshot");
+  }
+
+  function captureFailure(error, tone = "error") {
+    return { ok: false, error, feedback: { tone, text: error } };
+  }
+
+  const TOAST_OK_MS = 4000;
+  const TOAST_COLORS = { ok: "#15803d", error: "#b91c1c", info: "#334155" };
+  let toastHost = null;
+  let toastTimer = 0;
+
+  // Bottom-right notice on the job page, so the result stays visible after the popup closes. Shown only after the
+  // capture is taken (and the capture hides .btrack-toast anyway), so it never lands in a screenshot. A shadow root
+  // keeps the page's CSS out.
+  function showCaptureToast(feedback) {
+    if (!feedback?.text || !document.body) return;
+    clearTimeout(toastTimer);
+    toastHost?.remove();
+    toastHost = document.createElement("div");
+    toastHost.className = "btrack-toast";
+    const root = toastHost.attachShadow({ mode: "closed" });
+    const tone = TOAST_COLORS[feedback.tone] ? feedback.tone : "info";
+    const icon = { ok: "✓", error: "✕", info: "•" }[tone];
+    root.innerHTML = `
+      <style>
+        .toast { position: fixed; right: 20px; bottom: 20px; z-index: 2147483647; display: flex; gap: 10px;
+          align-items: flex-start; max-width: 360px; padding: 12px 14px; border-radius: 10px; color: #fff;
+          background: ${TOAST_COLORS[tone]}; box-shadow: 0 8px 24px rgba(0,0,0,.25);
+          font: 500 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+        .icon { font-weight: 700; }
+        .text { flex: 1; }
+        .brand { display: block; font-size: 11px; font-weight: 600; opacity: .8; letter-spacing: .02em; }
+        .detail { display: block; margin-top: 2px; font-size: 11px; opacity: .8; }
+        button { all: unset; cursor: pointer; padding: 0 2px; font-size: 16px; line-height: 1; opacity: .85; }
+        button:hover, button:focus-visible { opacity: 1; outline: 1px solid rgba(255,255,255,.6); border-radius: 3px; }
+      </style>
+      <div class="toast" role="${tone === "error" ? "alert" : "status"}">
+        <span class="icon" aria-hidden="true">${icon}</span>
+        <span class="text"><span class="brand">Bid Track</span><span class="message"></span><span class="detail"></span></span>
+        <button type="button" aria-label="Close">×</button>
+      </div>`;
+    root.querySelector(".message").textContent = feedback.text;
+    root.querySelector(".detail").textContent = feedback.detail || "";
+    root.querySelector("button").addEventListener("click", () => toastHost?.remove());
+    document.body.appendChild(toastHost);
+    if (tone !== "error") toastTimer = setTimeout(() => toastHost?.remove(), TOAST_OK_MS);
   }
 
   async function refreshJobMeta() {

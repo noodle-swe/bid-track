@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bid Track",
-  "version": "3.1.0",
-  "description": "Track job applications with full-page screenshots. Saves to Downloads and uploads PNGs to your Bid Track account.",
+  "version": "3.2.0",
+  "description": "Track job applications with full-page screenshots. Saves to Downloads and uploads screenshots to your Bid Track account.",
   "permissions": [
     "storage",
     "activeTab",
@@ -14,6 +14,12 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "commands": {
+    "capture": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Capture bid / step on the job page"
+    }
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"

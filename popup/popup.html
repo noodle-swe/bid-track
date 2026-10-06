@@ -12,6 +12,8 @@
     <div id="account" class="account hidden">
       <span id="username"></span>
       <span aria-hidden="true">·</span>
+      <button id="open-settings" class="link" type="button">Settings</button>
+      <span id="settings-sep" aria-hidden="true">·</span>
       <button id="logout" class="link" type="button">Log out</button>
     </div>
   </header>
@@ -32,8 +34,32 @@
   </section>
 
   <section id="main" class="hidden">
-    <button id="upload" class="btn primary" type="button">Upload Screenshot</button>
+    <button id="upload" class="btn primary" type="button">Capture step 1</button>
+    <p id="job" class="job hidden"></p>
     <p id="result" class="result hidden" role="status"></p>
+  </section>
+
+  <section id="settings" class="hidden">
+    <button id="close-settings" class="link back" type="button">← Back</button>
+
+    <h2>Account</h2>
+    <p class="setting-row">Username <span id="settings-username" class="value"></span></p>
+    <form id="password-form" class="form">
+      <label for="current-password">Current password</label>
+      <input id="current-password" type="password" required autocomplete="current-password" />
+      <label for="new-password">New password <span class="muted">(at least 8 characters)</span></label>
+      <input id="new-password" type="password" required minlength="8" autocomplete="new-password" />
+      <label for="confirm-password">Confirm new password</label>
+      <input id="confirm-password" type="password" required minlength="8" autocomplete="new-password" />
+      <button id="password-submit" class="btn primary" type="submit">Save password</button>
+    </form>
+    <p id="password-result" class="result hidden" role="status"></p>
+
+    <h2>Shortcut</h2>
+    <p class="setting-row">Capture <span id="shortcut" class="value"></span></p>
+    <button id="change-shortcut" class="btn" type="button">Change shortcut</button>
+
+    <h2>Downloads</h2>
     <label class="check">
       <input id="auto-download" type="checkbox" />
       Automatically download the screenshots to local

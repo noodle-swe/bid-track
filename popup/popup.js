@@ -1,4 +1,6 @@
-import { getAuth, register, login, logout, me, ApiError } from "../lib/api.js";
+import { getAuth, register, login, logout, me, changePassword, ApiError } from "../lib/api.js";
+import { stepOwnerKey, stepsTaken } from "../lib/storage.js";
+import { resolveApplyFlow } from "../lib/job-platform.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,8 +15,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   $("upload").addEventListener("click", uploadScreenshot);
   $("auto-download").addEventListener("change", saveAutoDownload);
+  $("open-settings").addEventListener("click", () => showView("settings"));
+  $("close-settings").addEventListener("click", () => showView("main"));
+  $("password-form").addEventListener("submit", submitPasswordChange);
+  // Chrome only lets its own page change an extension's shortcut.
+  $("change-shortcut").addEventListener("click", () => chrome.tabs.create({ url: "chrome://extensions/shortcuts" }));
   await render();
 });
+
+// "main" (capture) or "settings", for a logged-in bidder.
+function showView(view) {
+  $("main").classList.toggle("hidden", view !== "main");
+  $("settings").classList.toggle("hidden", view !== "settings");
+  $("open-settings").classList.toggle("hidden", view === "settings");
+  $("settings-sep").classList.toggle("hidden", view === "settings");
+  if (view === "settings") {
+    setText("password-result", "");
+    showShortcut();
+  }
+}
 
 async function render() {
   let auth = await getAuth();
@@ -25,16 +44,21 @@ async function render() {
   }
   const loggedIn = !!auth?.bidder;
   $("auth").classList.toggle("hidden", loggedIn);
-  $("main").classList.toggle("hidden", !loggedIn);
   $("account").classList.toggle("hidden", !loggedIn);
 
   if (loggedIn) {
-    $("username").textContent = auth.bidder.username || auth.bidder.name || "";
+    showView("main");
+    const name = auth.bidder.username || auth.bidder.name || "";
+    $("username").textContent = name;
+    $("settings-username").textContent = name;
     const { settings = {} } = await chrome.storage.local.get("settings");
     $("auto-download").checked = settings.autoSaveScreenshots !== false;
     setText("result", "");
+    await showNextStep();
     return;
   }
+  $("main").classList.add("hidden");
+  $("settings").classList.add("hidden");
   const { authNotice } = await chrome.storage.local.get("authNotice");
   setText("auth-notice", authNotice || "");
   setText("auth-error", "");
@@ -61,26 +85,67 @@ async function submitAuth(event) {
   }
 }
 
+// "Capture step N" on a multi-step application, "Capture bid" on a one-page form, with the job it is filed under.
+async function showNextStep() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+  const response = await chrome.runtime.sendMessage({ type: "GET_ACTIVE_RECORD" }).catch(() => null);
+  const record = response?.record;
+  const taken = stepsTaken(record, stepOwnerKey((await getAuth())?.bidder));
+  const flow = resolveApplyFlow(record?.applyFlow, await pageApplyFlow(tab?.id), record?.url || tab?.url);
+  $("upload").textContent =
+    flow === "multi" ? `Capture step ${taken + 1}` : taken ? "Capture bid again" : "Capture bid";
+  setText("job", record ? jobLine(record.companyName, record.title) : "");
+}
+
+// "multi", "single" or "unknown" from the page script, across frames (a form can sit in an iframe). Never injects:
+// a tab the page script isn't running in is "unknown".
+async function pageApplyFlow(tabId) {
+  if (!tabId) return "unknown";
+  const frames = await bootstrappedFrames(tabId).catch(() => []);
+  const flows = await Promise.all(
+    frames.map((frameId) =>
+      chrome.tabs.sendMessage(tabId, { type: "GET_APPLY_FLOW" }, { frameId }).then((r) => r?.flow, () => null)
+    )
+  );
+  if (flows.includes("multi")) return "multi";
+  return flows.includes("single") ? "single" : "unknown";
+}
+
+// "GRID eSports GmbH · Backend Engineer" from companyName "GRID_eSports_GmbH" and title
+// "GRID eSports GmbH - Backend Engineer": underscores become spaces and the company is not repeated in the title.
+function jobLine(companyName, rawTitle) {
+  const company = String(companyName || "").replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+  let title = String(rawTitle || "").trim();
+  if (company) {
+    const name = company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "[\\s_]+");
+    const shorter = title
+      .replace(new RegExp(`^${name}\\s*[-–—|:·@]\\s*`, "i"), "")
+      .replace(new RegExp(`\\s*(?:[-–—|:·@]|\\bat\\b)\\s*${name}$`, "i"), "")
+      .trim();
+    title = shorter.toLowerCase() === company.toLowerCase() ? "" : shorter || title;
+  }
+  return [company, title].filter(Boolean).join(" · ");
+}
+
 async function uploadScreenshot() {
   const button = $("upload");
   button.disabled = true;
-  setText("result", "Saving…", "busy");
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !/^https?:/i.test(tab.url || "")) throw new Error("Open a job page first");
-    const frameId = await findCaptureFrame(tab.id);
-    showCaptureResult(await chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_NOW" }, { frameId }));
-  } catch (err) {
-    setText("result", friendlyError(err), "error");
-  } finally {
-    button.disabled = false;
-  }
+  button.textContent = "Capturing & uploading…";
+  setText("result", "");
+  // The background does the capture, the same way as for the keyboard shortcut.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+  const result = await chrome.runtime
+    .sendMessage({ type: "CAPTURE_TAB", payload: { tabId: tab?.id } })
+    .catch((err) => ({ ok: false, feedback: { tone: "error", text: err.message || "Could not capture this page" } }));
+  const feedback = result?.feedback || { tone: "error", text: result?.error || "Could not capture this page" };
+  setText("result", feedback.text, feedback.tone);
+  button.disabled = false;
+  await showNextStep();
   // An upload refused with 401 logs the extension out; show the login form and its notice.
   if (!(await getAuth())) await render();
 }
 
-// Frames where the page script is running (it marks them); the top frame is preferred so one
-// click captures once.
+// Frames where the page script is running (it marks them).
 async function bootstrappedFrames(tabId) {
   const results = await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
@@ -89,34 +154,39 @@ async function bootstrappedFrames(tabId) {
   return results.filter((r) => r.result).map((r) => r.frameId);
 }
 
-async function findCaptureFrame(tabId) {
-  let frames = await bootstrappedFrames(tabId);
-  if (!frames.length) {
-    // Tab opened before the extension was loaded: inject the page script as the manifest would.
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["content/content.js"] });
-    frames = await bootstrappedFrames(tabId);
+async function showShortcut() {
+  // chrome.commands only exists once Chrome has loaded a manifest that declares the shortcut: an unpacked extension
+  // whose files changed keeps its old manifest until Reload on chrome://extensions.
+  if (!chrome.commands) {
+    $("shortcut").textContent = "Reload Bid Track to turn it on";
+    return;
   }
-  if (!frames.length) throw new Error("No job detected on this page");
-  return frames.includes(0) ? 0 : frames[0];
+  const commands = await chrome.commands.getAll().catch(() => []);
+  // Empty when Chrome dropped the default because another extension already uses the key.
+  $("shortcut").textContent = commands.find((c) => c.name === "capture")?.shortcut || "Not set";
 }
 
-function showCaptureResult(result) {
-  if (!result?.ok) {
-    setText("result", result?.error || "Could not capture this page", "error");
-  } else if (result.upload.ok) {
-    setText("result", `✓ Step ${result.step} saved · uploaded`, "ok");
-  } else if (result.upload.error === "not logged in") {
-    setText("result", `Step ${result.step} saved — log in so this bid counts`, "error");
-  } else {
-    setText("result", `Step ${result.step} saved — upload failed (${result.upload.error}). Try again.`, "error");
+async function submitPasswordChange(event) {
+  event.preventDefault();
+  const current = $("current-password").value;
+  const next = $("new-password").value;
+  if (next !== $("confirm-password").value) {
+    setText("password-result", "The new passwords don't match", "error");
+    return;
   }
-}
-
-function friendlyError(err) {
-  const message = err?.message || "";
-  if (/cannot access|cannot be scripted|extensions gallery/i.test(message)) return "Bid Track can't capture this page";
-  if (/receiving end does not exist/i.test(message)) return "No job detected on this page";
-  return message || "Could not capture this page";
+  const button = $("password-submit");
+  button.disabled = true;
+  setText("password-result", "");
+  try {
+    await changePassword(current, next);
+    event.target.reset();
+    setText("password-result", "Password changed. Other browsers using this login were logged out.", "ok");
+  } catch (err) {
+    setText("password-result", err instanceof ApiError ? err.message : "Something went wrong — try again", "error");
+  } finally {
+    button.disabled = false;
+  }
+  if (!(await getAuth())) await render();
 }
 
 async function saveAutoDownload() {
@@ -128,5 +198,5 @@ function setText(id, text, tone = "") {
   const el = $(id);
   el.textContent = text;
   el.classList.toggle("hidden", !text);
-  if (id === "result") el.dataset.tone = tone;
+  if (el.classList.contains("result")) el.dataset.tone = tone;
 }

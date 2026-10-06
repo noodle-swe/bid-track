@@ -143,6 +143,64 @@ input[type="password"]:focus {
   color: #cbd5e1;
 }
 
+#settings {
+  margin-top: 10px;
+}
+
+#settings h2 {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid #1e293b;
+  font-size: 13px;
+  color: #f1f5f9;
+}
+
+#settings h2:first-of-type {
+  margin-top: 8px;
+}
+
+.back {
+  font-size: 12px;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.value {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.btn:not(.primary) {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+}
+
+.btn:not(.primary):hover:not(:disabled) {
+  background: #273449;
+}
+
+#settings .btn {
+  width: 100%;
+}
+
+.job {
+  margin: 6px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .result[data-tone="ok"] {
   color: #86efac;
 }

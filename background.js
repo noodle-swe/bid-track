@@ -3,13 +3,10 @@ import {
   buildRecordExport,
   clearActiveRecordId,
   createRecordId,
-  deleteRecordScreenshots,
   getActiveRecordId,
   getCompanyLabel,
   getJobSessionKey,
   getRecords,
-  getRecordScreenshots,
-  getScreenshot,
   getSettings,
   detectAtsPlatform,
   getWorkdayRequisitionId,
@@ -26,10 +23,13 @@ import {
   normalizeJobId,
   parseJobIdentity,
   saveRecord,
-  saveScreenshot,
-  setActiveRecordId
+  setActiveRecordId,
+  stepOwnerKey,
+  stepsTaken,
+  withStepTaken
 } from "./lib/storage.js";
 import { getArtifactBackend } from "./lib/artifact-storage.js";
+import { resolveApplyFlow } from "./lib/job-platform.js";
 import { confirmUpload, getAuth, getUploadUrl, localIsoWithOffset } from "./lib/api.js";
 
 const captureQueue = new Map();
@@ -37,7 +37,17 @@ const captureQueue = new Map();
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log("Bid Track installed");
   if (details.reason === "update") await removeLegacyBackblazeSettings();
+  await removeStoredScreenshots();
 });
+
+// Versions up to 3.1.0 kept a copy of every PNG in chrome.storage.local, which fills its 10 MB quota.
+async function removeStoredScreenshots() {
+  try {
+    await chrome.storage.local.remove("screenshots");
+  } catch (err) {
+    console.warn("[Bid Track] Could not remove stored screenshots:", err.message);
+  }
+}
 
 // Versions before 3.0 stored Backblaze keys locally; uploads now go through signed links.
 async function removeLegacyBackblazeSettings() {
@@ -51,6 +61,54 @@ async function removeLegacyBackblazeSettings() {
   } catch (err) {
     console.warn("[Bid Track] Could not remove legacy Backblaze settings:", err.message);
   }
+}
+
+// Keyboard shortcut (Alt+Shift+S by default, changeable at chrome://extensions/shortcuts). The result shows as the
+// page notification and the toolbar badge, the popup need not be open.
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "capture") return;
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  await captureTab(tab?.id);
+});
+
+// One capture of the job page in tabId, for the popup button and the shortcut. The page script takes it from there
+// (and shows the page notification); failures before it runs only light the badge.
+async function captureTab(tabId) {
+  try {
+    const tab = tabId ? await chrome.tabs.get(tabId) : null;
+    if (!tab || !/^https?:/i.test(tab.url || "")) throw new Error("Open a job page first");
+    const frameId = await findCaptureFrame(tab.id);
+    return await chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_NOW" }, { frameId });
+  } catch (err) {
+    const text = captureProblem(err);
+    await showUploadBadge(false);
+    return { ok: false, error: text, feedback: { tone: "error", text } };
+  }
+}
+
+// Frames where the page script is running (it marks them); the top frame is preferred so one press captures once.
+async function findCaptureFrame(tabId) {
+  const marked = async () =>
+    (
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => !!window.__bidTrackBootstrapped })
+    )
+      .filter((r) => r.result)
+      .map((r) => r.frameId);
+  let frames = await marked();
+  if (!frames.length) {
+    // Tab opened before the extension was loaded: inject the page script as the manifest would.
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["content/content.js"] });
+    frames = await marked();
+  }
+  if (!frames.length) throw new Error("No job detected on this page");
+  return frames.includes(0) ? 0 : frames[0];
+}
+
+function captureProblem(err) {
+  const message = err?.message || "";
+  if (/cannot access|cannot be scripted|extensions gallery/i.test(message)) return "Bid Track can't capture this page";
+  if (/receiving end does not exist/i.test(message)) return "No job detected on this page";
+  return message || "Could not capture this page";
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -70,8 +128,17 @@ async function handleMessage(message, sender) {
     case "UPDATE_JOB_META":
       return updateJobMeta(message.payload, tabId);
 
-    case "CAPTURE_PAGE":
-      return capturePage(message.payload, tabId);
+    case "SET_APPLY_FLOW":
+      return setApplyFlow(message.payload);
+
+    case "CAPTURE_TAB":
+      return captureTab(message.payload?.tabId);
+
+    case "CAPTURE_PAGE": {
+      const result = await capturePage(message.payload, tabId);
+      if (!result.skipped) await showUploadBadge(!!(result.ok && result.b2Upload?.ok));
+      return result;
+    }
 
     case "GET_ACTIVE_RECORD": {
       let targetTabId = tabId;
@@ -83,13 +150,10 @@ async function handleMessage(message, sender) {
     }
 
     case "GET_RECORDS":
-      return getRecordsWithScreenshots();
+      return { ok: true, records: await getRecords() };
 
     case "DELETE_RECORD":
       return deleteRecord(message.payload.id);
-
-    case "DOWNLOAD_SCREENSHOT":
-      return downloadScreenshot(message.payload);
 
     case "DOWNLOAD_JSON":
       return downloadRecordJson(message.payload);
@@ -155,10 +219,6 @@ async function initJobRecord(payload, tabId) {
     }
 
     assignDownloadPaths(existing, settings);
-    if (!existing.jsonExportedAt) {
-      await ensureJobFolder(existing, settings);
-    }
-
     await saveRecord(existing);
     return { ok: true, record: existing, reused: true };
   }
@@ -212,9 +272,6 @@ async function initJobRecord(payload, tabId) {
   assignDownloadPaths(record, settings);
   await saveRecord(record);
   await setActiveRecordId(tabId, record.id);
-  if (isTrackableJobPage(payload)) {
-    await ensureJobFolder(record, settings);
-  }
   notifyRecordUpdated(record);
   return { ok: true, record, reused: false };
 }
@@ -369,35 +426,17 @@ async function updateJobMeta(payload, tabId) {
   return { ok: true, record };
 }
 
-function scheduleDeferredJobJsonExport(recordId, { refreshJson = false } = {}) {
-  void (async () => {
-    try {
-      const records = await getRecords();
-      const record = records.find((item) => item.id === recordId);
-      if (!record) return;
-
-      const settings = await getSettings();
-      if (!record.jsonExportedAt) {
-        await ensureJobFolder(record, settings);
-      } else if (refreshJson) {
-        await refreshJobJsonExport(record, settings);
-        record.jsonExportedAt = new Date().toISOString();
-        await saveRecord(record);
-        notifyRecordUpdated(record);
-      }
-    } catch (err) {
-      console.warn("[Bid Track] Deferred JSON export failed:", err.message);
-    }
-  })();
-}
-
-async function refreshJobJsonExport(record, settings) {
-  if (!record?.jsonFileName || settings.autoSaveJson === false) return;
-  const backend = await getArtifactBackend(settings);
-  await backend.removeArtifact(record.jsonFileName);
-  await downloadJsonExport(record, record.jsonFileName, settings);
-  record.jsonExportedAt = new Date().toISOString();
-  record.downloadFolderLocked = true;
+// The page script saw a Next button or step indicator: the job stays multi-step for its later pages.
+async function setApplyFlow(payload) {
+  if (payload?.flow !== "multi") return { ok: false };
+  const records = await getRecords();
+  const record = records.find((r) => r.id === payload.recordId);
+  if (!record) return { ok: false, error: "Record not found" };
+  if (record.applyFlow !== "multi") {
+    record.applyFlow = "multi";
+    await saveRecord(record);
+  }
+  return { ok: true };
 }
 
 async function getActiveRecordForTab(tabId) {
@@ -432,11 +471,11 @@ async function capturePage(payload, tabId) {
 
   captureQueue.set(targetTabId, true);
   try {
-    const step = record.stepCount + 1;
+    const stepOwner = stepOwnerKey((await getAuth())?.bidder);
+    const step = stepsTaken(record, stepOwner) + 1;
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     assignDownloadPaths(record, settings);
     const jobFolder = record.downloadFolder;
-    const screenshotFileName = `${jobFolder}/step${step}_${trigger}_${timestamp}.png`;
     const jsonFileName = record.jsonFileName;
     const captureId = `step_${step}`;
 
@@ -450,6 +489,9 @@ async function capturePage(payload, tabId) {
       dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
       fullPage = false;
     }
+    dataUrl = await compressScreenshot(dataUrl);
+    const format = imageFormatOf(dataUrl);
+    const screenshotFileName = `${jobFolder}/step${step}_${trigger}_${timestamp}.${FILE_EXTENSIONS[format]}`;
 
     const capturedAt = new Date();
     const b2Upload = await uploadScreenshot({
@@ -458,6 +500,7 @@ async function capturePage(payload, tabId) {
       trigger,
       capturedAt,
       dataUrl,
+      format,
       jobUrl: record.url,
       jobTitle: record.title
     });
@@ -476,6 +519,8 @@ async function capturePage(payload, tabId) {
     };
 
     record.stepCount = step;
+    record.stepCounts = withStepTaken(record, stepOwner, step);
+    if (payload?.applyFlow === "multi") record.applyFlow = "multi";
     record.captures = [...(record.captures || []), capture];
     record.jsonFileName = jsonFileName;
     record.updatedAt = new Date().toISOString();
@@ -492,7 +537,6 @@ async function capturePage(payload, tabId) {
     if (payload?.title) record.title = payload.title;
     assignDownloadPaths(record, settings);
 
-    await saveScreenshot(record.id, captureId, dataUrl);
     record.downloadFolderLocked = true;
     await saveRecord(record);
 
@@ -514,6 +558,9 @@ async function capturePage(payload, tabId) {
       fileName: screenshotFileName,
       b2FileName,
       b2Upload,
+      feedback: describeUpload(
+        step, b2Upload, record.companyName, resolveApplyFlow(record.applyFlow, payload?.applyFlow, record.url)
+      ),
       jsonFileName,
       fullPage,
       localSave
@@ -524,9 +571,51 @@ async function capturePage(payload, tabId) {
 }
 
 const UPLOAD_TIMEOUT_MS = 60000;
+const BADGE_OK_MS = 5000;
 
-// Asks the backend for a signed link, PUTs the PNG to it and confirms it. Never throws: failures are reported in the result.
-async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl, jobUrl, jobTitle }) {
+// The one place upload results are worded; the page notification and the popup both show this text.
+// flow is "multi" (multi-step application: "Step 3 ...") or "single" (one-page form: "Bid ...").
+function describeUpload(step, upload, company, flow = "multi") {
+  const what = flow === "single" ? "Bid" : `Step ${step}`;
+  if (upload.ok) return { tone: "ok", text: `${what} uploaded${company ? ` · ${company}` : ""}` };
+  const error = upload.error || "";
+  return { tone: "error", text: `${what} not uploaded: ${uploadProblem(error)}`, detail: error };
+}
+
+function uploadProblem(error) {
+  if (error === "not logged in") return "log in to Bid Track so this counts.";
+  if (/logged out/i.test(error)) return "you were logged out. Log in again, then capture again.";
+  if (/^HTTP 40[13]\b/.test(error)) return "storage refused it. Tell your manager.";
+  if (/capturedAt is not current/i.test(error)) return "your computer's clock looks wrong. Fix the date and time, then capture again.";
+  if (/no answer in/i.test(error)) return "it timed out. Capture again.";
+  if (/^HTTP 5\d\d\b|not configured/i.test(error)) return "the server had a problem. Capture again in a minute.";
+  if (/failed to fetch|networkerror|could not reach the server/i.test(error)) {
+    return "lost connection. Check your internet and capture again.";
+  }
+  return "capture again.";
+}
+
+// Toolbar badge: a green check that clears itself, or a red ! that stays until the next successful upload.
+let badgeToken = 0;
+async function showUploadBadge(ok) {
+  const token = ++badgeToken;
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: ok ? "#16a34a" : "#dc2626" });
+    await chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
+    await chrome.action.setBadgeText({ text: ok ? "✓" : "!" });
+  } catch (err) {
+    console.warn("[Bid Track] Could not update the badge:", err.message);
+    return;
+  }
+  if (ok) {
+    setTimeout(() => {
+      if (token === badgeToken) chrome.action.setBadgeText({ text: "" }).catch(() => {});
+    }, BADGE_OK_MS);
+  }
+}
+
+// Asks the backend for a signed link, PUTs the image to it and confirms it. Never throws: failures are reported in the result.
+async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl, format, jobUrl, jobTitle }) {
   if (!(await getAuth())) return { ok: false, error: "not logged in" };
   try {
     const job = String(jobFolder || "").split("/").filter(Boolean).pop() || "job";
@@ -535,6 +624,7 @@ async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl,
       step,
       trigger,
       capturedAt: localIsoWithOffset(capturedAt),
+      format,
       jobUrl,
       jobTitle
     });
@@ -547,6 +637,35 @@ async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl,
   } catch (err) {
     if (err?.name === "TimeoutError") return { ok: false, error: `no answer in ${UPLOAD_TIMEOUT_MS / 1000} s` };
     return { ok: false, error: err.message || "unknown error" };
+  }
+}
+
+// Screenshots are uploaded as WebP when that is smaller: about 14x smaller than PNG on typical job pages, text still
+// sharp. Plain black-on-white pages can compress better as PNG, so the smaller of the two is kept.
+const WEBP_QUALITY_PERCENT = 70;
+const FILE_EXTENSIONS = { png: "png", webp: "webp", jpeg: "jpg" };
+
+function imageFormatOf(dataUrl) {
+  const type = /^data:image\/(png|webp|jpeg)[;,]/.exec(dataUrl || "")?.[1];
+  return type || "png";
+}
+
+// Re-encodes a PNG capture as WebP and returns whichever is smaller. Keeps the PNG when the conversion fails, so a
+// capture never fails over its format.
+async function compressScreenshot(dataUrl) {
+  if (imageFormatOf(dataUrl) !== "png") return dataUrl;
+  try {
+    const png = await (await fetch(dataUrl)).blob();
+    const bitmap = await createImageBitmap(png);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await canvas.convertToBlob({ type: "image/webp", quality: WEBP_QUALITY_PERCENT / 100 });
+    if (blob.type !== "image/webp" || blob.size >= png.size) return dataUrl;
+    return await blobToDataUrl(blob);
+  } catch (err) {
+    console.warn("[Bid Track] Could not compress the screenshot, uploading PNG:", err.message);
+    return dataUrl;
   }
 }
 
@@ -953,46 +1072,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function getRecordsWithScreenshots() {
-  const records = await getRecords();
-  const withScreenshots = await Promise.all(
-    records.map(async (record) => {
-      const shots = await getRecordScreenshots(record.id);
-      const latestCapture = record.captures?.[record.captures.length - 1];
-      const latestDataUrl = latestCapture ? shots[latestCapture.id] : null;
-      return latestDataUrl ? { ...record, latestScreenshotDataUrl: latestDataUrl } : record;
-    })
-  );
-  return { ok: true, records: withScreenshots };
-}
-
 async function deleteRecord(id) {
   const records = await getRecords();
   const filtered = records.filter((r) => r.id !== id);
   await chrome.storage.local.set({ records: filtered });
-  await deleteRecordScreenshots(id);
   return { ok: true };
-}
-
-async function downloadScreenshot(payload) {
-  const records = await getRecords();
-  const record = records.find((r) => r.id === payload.recordId);
-  if (!record) return { ok: false, error: "Record not found" };
-
-  const capture =
-    record.captures?.find((item) => item.id === payload.captureId) ||
-    record.captures?.[record.captures.length - 1];
-  if (!capture) return { ok: false, error: "No capture found" };
-
-  const dataUrl = await getScreenshot(record.id, capture.id);
-  if (!dataUrl) return { ok: false, error: "No screenshot available" };
-
-  const fileName =
-    payload.fileName ||
-    capture.screenshotFileName ||
-    `${record.downloadFolder || "BidTrackScreenshots"}/${capture.id}.png`;
-  await chrome.downloads.download({ url: dataUrl, filename: fileName, saveAs: true });
-  return { ok: true, fileName };
 }
 
 async function downloadRecordJson(payload) {
@@ -1023,16 +1107,6 @@ function assignDownloadPaths(record, settings) {
   }
 
   record.jsonFileName = `${record.downloadFolder}/job-info.json`;
-}
-
-async function ensureJobFolder(record, settings) {
-  if (record.jsonExportedAt) return;
-  if (!isTrackableJobPage({ title: record.title, jobDescription: record.jobDescription })) return;
-  if (settings.autoSaveJson === false) return;
-  await downloadJsonExport(record, record.jsonFileName);
-  record.jsonExportedAt = new Date().toISOString();
-  record.downloadFolderLocked = true;
-  await saveRecord(record);
 }
 
 async function purgeInvalidJobRecord(record, tabId, payload = {}) {
