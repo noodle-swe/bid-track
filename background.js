@@ -30,7 +30,7 @@ import {
   setActiveRecordId
 } from "./lib/storage.js";
 import { getArtifactBackend } from "./lib/artifact-storage.js";
-import { getAuth, getUploadUrl, localIsoWithOffset } from "./lib/api.js";
+import { confirmUpload, getAuth, getUploadUrl, localIsoWithOffset } from "./lib/api.js";
 
 const captureQueue = new Map();
 
@@ -452,7 +452,15 @@ async function capturePage(payload, tabId) {
     }
 
     const capturedAt = new Date();
-    const b2Upload = await uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl });
+    const b2Upload = await uploadScreenshot({
+      jobFolder,
+      step,
+      trigger,
+      capturedAt,
+      dataUrl,
+      jobUrl: record.url,
+      jobTitle: record.title
+    });
     const b2FileName = b2Upload.ok ? b2Upload.fileName : "";
 
     const capture = {
@@ -517,8 +525,8 @@ async function capturePage(payload, tabId) {
 
 const UPLOAD_TIMEOUT_MS = 60000;
 
-// Asks the backend for a signed link and PUTs the PNG to it. Never throws: failures are reported in the result.
-async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl }) {
+// Asks the backend for a signed link, PUTs the PNG to it and confirms it. Never throws: failures are reported in the result.
+async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl, jobUrl, jobTitle }) {
   if (!(await getAuth())) return { ok: false, error: "not logged in" };
   try {
     const job = String(jobFolder || "").split("/").filter(Boolean).pop() || "job";
@@ -526,11 +534,15 @@ async function uploadScreenshot({ jobFolder, step, trigger, capturedAt, dataUrl 
       job,
       step,
       trigger,
-      capturedAt: localIsoWithOffset(capturedAt)
+      capturedAt: localIsoWithOffset(capturedAt),
+      jobUrl,
+      jobTitle
     });
     const body = await (await fetch(dataUrl)).blob();
     const response = await fetch(url, { method: "PUT", headers, body, signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // The file is stored either way; an unconfirmed upload only stays out of the bid's counts.
+    await confirmUpload(key).catch((err) => console.warn("[Bid Track] Could not confirm the upload:", err.message));
     return { ok: true, fileName: key };
   } catch (err) {
     if (err?.name === "TimeoutError") return { ok: false, error: `no answer in ${UPLOAD_TIMEOUT_MS / 1000} s` };

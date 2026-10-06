@@ -23,6 +23,7 @@ Everything is in the window that opens when you click the extension icon.
   for each step of an application (before Next, and before Submit). The line under the button shows the result.
 - **Automatically download the screenshots to local** also saves each PNG to
   `Downloads/BidTrackScreenshots/<job-folder>/` (with a `job-info.json` for the job).
+- Each application (all the screenshots of one job page) is recorded as a bid that your manager reviews.
 - **Log out** next to your username.
 
 ## Server
